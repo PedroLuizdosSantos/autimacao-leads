@@ -43,6 +43,18 @@ EXCLUDED_COLUMNS = LEADS_REQUIRED_COLUMNS + ["excluded_at", "excluded_reason"]
 st.set_page_config(page_title="Painel de Leads", layout="wide")
 
 
+def get_google_places_api_key() -> str:
+    env_key = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    try:
+        secret_key = str(st.secrets.get("GOOGLE_PLACES_API_KEY", "")).strip()
+    except Exception:
+        secret_key = ""
+    return secret_key
+
+
 def _normalize(value: str) -> str:
     text = unicodedata.normalize("NFKD", str(value).strip().lower())
     return "".join(ch for ch in text if not unicodedata.combining(ch))
@@ -518,7 +530,7 @@ def run_collection(
             summary["errors"].append("Nenhuma fonte selecionada para coleta.")
         else:
             if run_maps:
-                api_key = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
+                api_key = get_google_places_api_key()
                 if not api_key:
                     summary["errors"].append("GOOGLE_PLACES_API_KEY nao encontrada. Maps nao executado.")
                     log("[Maps] Pulado: sem GOOGLE_PLACES_API_KEY.")
@@ -1150,7 +1162,7 @@ def render_latest_prospect_tab() -> None:
 def render_collection_tab(leads_df: pd.DataFrame) -> None:
     st.subheader("Coleta/Busca")
 
-    api_key_exists = bool(os.getenv("GOOGLE_PLACES_API_KEY", "").strip())
+    api_key_exists = bool(get_google_places_api_key())
     st.caption("Configure overrides sem alterar config.py e execute a coleta daqui.")
 
     with st.form("collect_form"):

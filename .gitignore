@@ -10,13 +10,5 @@ env/
 .streamlit/
 streamlit.log
 
-leads.csv
-prospeccao.csv
-prospeccao.xlsx
-prospeccao_instagram_locator.csv
-prospeccao_instagram_locator.xlsx
-excluidos.csv
-last_collection.txt
-
 .DS_Store
 Thumbs.db
