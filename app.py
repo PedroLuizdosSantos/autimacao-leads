@@ -1593,7 +1593,7 @@ def render_instagram_locator_tab(leads_df: pd.DataFrame) -> None:
             height=420,
             key=grid_key,
             on_select="rerun",
-            selection_mode=["single-row", "single-cell"],
+            selection_mode="single-row",
             column_config={
                 "status_visual": st.column_config.TextColumn("status", width="medium"),
                 "observacao": st.column_config.TextColumn("observacao", width="large"),
@@ -1689,7 +1689,7 @@ def main() -> None:
                         height=420,
                         key=grid_key,
                         on_select="rerun",
-                        selection_mode=["single-row", "single-cell"],
+                        selection_mode="single-row",
                         column_config={
                             "status_visual": st.column_config.TextColumn("status", width="medium"),
                             "observacao": st.column_config.TextColumn("observacao", width="large"),
@@ -1741,7 +1741,7 @@ def main() -> None:
                 height=420,
                 key=grid_key,
                 on_select="rerun",
-                selection_mode=["single-row", "single-cell"],
+                selection_mode="single-row",
                 column_config={
                     "status_visual": st.column_config.TextColumn("status", width="medium"),
                     "observacao": st.column_config.TextColumn("observacao", width="large"),
