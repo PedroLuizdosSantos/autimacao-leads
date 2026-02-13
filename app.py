@@ -1125,26 +1125,26 @@ def render_selection_menu(tab_label: str, selected_df: pd.DataFrame) -> None:
     send_url_2 = _build_whatsapp_send_link(lead, msg_2)
     cols = st.columns([1, 1, 0.9, 0.9, 1, 1, 1, 1, 1, 1, 0.9, 1, 2], gap="small")
     if send_url_1:
-        cols[0].link_button("Msg 1", send_url_1, width="stretch")
+        cols[0].link_button("Msg 1", send_url_1)
     else:
-        cols[0].button("Msg 1", disabled=True, key=f"{tab_label}_send_wa1_dis", width="stretch")
+        cols[0].button("Msg 1", disabled=True, key=f"{tab_label}_send_wa1_dis")
     if send_url_2:
-        cols[1].link_button("Msg 2", send_url_2, width="stretch")
+        cols[1].link_button("Msg 2", send_url_2)
     else:
-        cols[1].button("Msg 2", disabled=True, key=f"{tab_label}_send_wa2_dis", width="stretch")
+        cols[1].button("Msg 2", disabled=True, key=f"{tab_label}_send_wa2_dis")
     if wa:
-        cols[2].link_button("WA", wa, width="stretch")
+        cols[2].link_button("WA", wa)
     else:
-        cols[2].button("WA", disabled=True, key=f"{tab_label}_wa_dis", width="stretch")
+        cols[2].button("WA", disabled=True, key=f"{tab_label}_wa_dis")
     if ig:
-        cols[3].link_button("IG", ig, width="stretch")
+        cols[3].link_button("IG", ig)
     else:
-        cols[3].button("IG", disabled=True, key=f"{tab_label}_ig_dis", width="stretch")
+        cols[3].button("IG", disabled=True, key=f"{tab_label}_ig_dis")
     if origem:
-        cols[4].link_button("Origem", origem, width="stretch")
+        cols[4].link_button("Origem", origem)
     else:
-        cols[4].button("Origem", disabled=True, key=f"{tab_label}_orig_dis", width="stretch")
-    if cols[5].button("Buscar IG", key=f"{tab_label}_search_ig", width="stretch"):
+        cols[4].button("Origem", disabled=True, key=f"{tab_label}_orig_dis")
+    if cols[5].button("Buscar IG", key=f"{tab_label}_search_ig"):
         search_instagram_for_selected(selected_df, tab_label)
 
     note = cols[12].text_input(
@@ -1161,7 +1161,7 @@ def render_selection_menu(tab_label: str, selected_df: pd.DataFrame) -> None:
         (9, "RESPONDEU", "respondeu"),
         (10, "NOVO", "novo"),
     ]:
-        if cols[idx].button(label, key=f"{tab_label}_{value}", width="stretch"):
+        if cols[idx].button(label, key=f"{tab_label}_{value}"):
             updated = batch_update_status(selected_df, value, note)
             if updated == 0:
                 st.warning("Nenhuma linha selecionada.")
@@ -1171,7 +1171,7 @@ def render_selection_menu(tab_label: str, selected_df: pd.DataFrame) -> None:
                 generate_ig_locator_prospect(load_leads())
                 st.rerun()
 
-    if cols[11].button("EXCLUIR", key=f"{tab_label}_exclude", width="stretch"):
+    if cols[11].button("EXCLUIR", key=f"{tab_label}_exclude"):
         removed, excluded_added = exclude_selected_leads(selected_df, reason=note)
         if removed == 0:
             st.warning("Nenhuma linha selecionada para exclusao.")
