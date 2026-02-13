@@ -1,5 +1,6 @@
 ﻿from datetime import datetime, timezone
 from pathlib import Path
+import json
 import os
 import re
 import unicodedata
@@ -34,13 +35,78 @@ IG_LOCATOR_PROSPECT_XLSX_PATH = BASE_DIR / "prospeccao_instagram_locator.xlsx"
 DEFAULT_SEEDS_PATH = BASE_DIR / "seeds_ig.txt"
 LAST_COLLECTION_PATH = BASE_DIR / "last_collection.txt"
 EXCLUDED_PATH = BASE_DIR / "excluidos.csv"
+CONTACT_SETTINGS_PATH = BASE_DIR / "contact_settings.json"
 IG_LOCATOR_TAG = "IG Locator"
 
 LEADS_EXTRA_COLUMNS = ["last_contact_at", "last_contact_note"]
 LEADS_REQUIRED_COLUMNS = COLUMNS + LEADS_EXTRA_COLUMNS
 EXCLUDED_COLUMNS = LEADS_REQUIRED_COLUMNS + ["excluded_at", "excluded_reason"]
 
+DEFAULT_MSG_1_BR = (
+    "Ola, tudo bem?\n"
+    "Meu nome e Pedro.\n\n"
+    "Vi seu trabalho no Instagram e gostei muito. Notei que muitas clientes acabam chamando no direct/WhatsApp e, as vezes, falta um link mais profissional para passar confianca e facilitar o agendamento.\n\n"
+    "Eu crio uma landing simples (uma pagina unica na internet, tipo um cartao de visitas profissional, com botao direto para o WhatsApp), com seus servicos, localizacao e depoimentos, para transformar visita em agendamento.\n"
+    "Posso te mandar um exemplo rapidinho para voce ver como fica?"
+)
+DEFAULT_MSG_1_PT = (
+    "Ola, tudo bem? O meu nome e Pedro.\n\n"
+    "Estive a ver o seu trabalho no Instagram e gostei bastante. Reparei que muitas clientes acabam por enviar mensagem pelo direct ou WhatsApp, mas nem sempre existe um link profissional que transmita confianca e facilite a marcacao.\n\n"
+    "Eu crio uma pagina online simples e profissional (como um cartao de visita digital), com botao direto para o WhatsApp, servicos, localizacao e testemunhos, tudo organizado para ajudar a transformar visitas em marcacoes.\n\n"
+    "Posso enviar-lhe um exemplo rapido para ver como funciona?"
+)
+DEFAULT_MSG_2 = (
+    "Oi, tudo bem? Meu nome e Pedro.\n"
+    "Dei uma olhada no seu Instagram e achei seu trabalho bem profissional.\n\n"
+    "Notei que muitas clientes acabam chamando pelo direct ou WhatsApp e, as vezes, ter um link mais organizado ajuda bastante a passar confianca e facilitar o agendamento.\n\n"
+    "Eu ajudo justamente com isso: crio uma pagina simples, personalizada para o seu servico, com botao direto para o WhatsApp e as informacoes principais, para deixar tudo mais facil para quem entra no seu perfil.\n\n"
+    "Se fizer sentido para voce, posso te mandar um exemplo para ver se gosta da ideia."
+)
+
 st.set_page_config(page_title="Painel de Leads", layout="wide")
+
+
+def apply_responsive_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .stButton > button,
+        .stLinkButton > a {
+            min-height: 2rem;
+            padding: 0.2rem 0.55rem;
+            font-size: 0.9rem;
+        }
+        @media (max-width: 900px) {
+            .block-container {
+                padding-left: 0.8rem;
+                padding-right: 0.8rem;
+                padding-top: 1rem;
+                padding-bottom: 1rem;
+            }
+            div[data-testid="stHorizontalBlock"] {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+                width: 100% !important;
+                min-width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+            div[data-testid="stTabs"] button[role="tab"] {
+                padding-left: 0.65rem;
+                padding-right: 0.65rem;
+                white-space: normal;
+                line-height: 1.15;
+            }
+            .stButton > button,
+            .stDownloadButton > button {
+                width: 100%;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def get_google_places_api_key() -> str:
@@ -379,16 +445,12 @@ def add_status_badge_column(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def exclude_selected_leads(edited_df: pd.DataFrame, reason: str) -> tuple[int, int]:
-    if "selecionar" not in edited_df.columns:
-        return 0, 0
-
-    selected = edited_df[edited_df["selecionar"] == True]
-    if selected.empty:
+def exclude_selected_leads(selected_df: pd.DataFrame, reason: str) -> tuple[int, int]:
+    if selected_df.empty:
         return 0, 0
 
     leads_df = load_leads()
-    selected_keys = {dedupe_key(row.to_dict()) for _, row in selected.iterrows()}
+    selected_keys = {dedupe_key(row.to_dict()) for _, row in selected_df.iterrows()}
 
     keep_rows = []
     removed_rows = []
@@ -761,17 +823,13 @@ def update_from_editor(leads_df: pd.DataFrame, edited_df: pd.DataFrame, editable
     return update_rows_by_key(LEADS_PATH, updates, target_fields=set(editable_fields) | {"last_contact_at"})
 
 
-def batch_update_status(edited_df: pd.DataFrame, status_value: str, note: str) -> int:
-    if "selecionar" not in edited_df.columns:
-        return 0
-
-    selected = edited_df[edited_df["selecionar"] == True]
-    if selected.empty:
+def batch_update_status(selected_df: pd.DataFrame, status_value: str, note: str) -> int:
+    if selected_df.empty:
         return 0
 
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     updates = []
-    for _, row in selected.iterrows():
+    for _, row in selected_df.iterrows():
         row_dict = row.to_dict()
         payload = {
             "fonte": row_dict.get("fonte", ""),
@@ -863,20 +921,102 @@ def _build_whatsapp_send_link(lead: dict, template: str) -> str:
     return f"{base}{sep}text={quote_plus(msg)}"
 
 
-def search_instagram_for_selected(edited_df: pd.DataFrame, key_prefix: str) -> None:
-    if "selecionar" not in edited_df.columns:
-        st.warning("Selecao indisponivel nesta tabela.")
-        return
+def _default_contact_settings() -> dict:
+    return {
+        "msg_1_br": DEFAULT_MSG_1_BR,
+        "msg_1_pt": DEFAULT_MSG_1_PT,
+        "msg_2": DEFAULT_MSG_2,
+    }
 
-    selected = edited_df[edited_df["selecionar"] == True]
-    if selected.empty:
+
+def load_contact_settings() -> dict:
+    defaults = _default_contact_settings()
+    if not CONTACT_SETTINGS_PATH.exists():
+        return defaults
+    try:
+        data = json.loads(CONTACT_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return defaults
+    if not isinstance(data, dict):
+        return defaults
+    out = defaults.copy()
+    for key in out.keys():
+        value = data.get(key, out[key])
+        out[key] = str(value or "").strip() or out[key]
+    return out
+
+
+def save_contact_settings(settings: dict) -> None:
+    payload = _default_contact_settings()
+    for key in payload.keys():
+        payload[key] = str(settings.get(key, payload[key]) or "").strip() or payload[key]
+    CONTACT_SETTINGS_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _selected_rows_from_state(grid_key: str, total_rows: int) -> list[int]:
+    state = st.session_state.get(grid_key)
+    if not state:
+        return []
+
+    rows = []
+    cells = []
+    if isinstance(state, dict):
+        selection = state.get("selection", {}) or {}
+        rows = selection.get("rows", []) or []
+        cells = selection.get("cells", []) or []
+    else:
+        selection = getattr(state, "selection", None)
+        if selection is not None:
+            rows = getattr(selection, "rows", []) or []
+            cells = getattr(selection, "cells", []) or []
+
+    normalized_set = set()
+    for item in rows:
+        try:
+            idx = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < total_rows:
+            normalized_set.add(idx)
+
+    # Fallback: if user clicked a cell, infer the row from cell selection.
+    for cell in cells:
+        row_idx = None
+        if isinstance(cell, dict):
+            row_idx = cell.get("row")
+        elif isinstance(cell, (list, tuple)) and len(cell) >= 1:
+            row_idx = cell[0]
+        try:
+            idx = int(row_idx)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < total_rows:
+            normalized_set.add(idx)
+
+    return sorted(normalized_set)
+
+
+def selected_from_grid(df: pd.DataFrame, grid_key: str) -> pd.DataFrame:
+    if df.empty:
+        return df.iloc[0:0].copy()
+    rows = _selected_rows_from_state(grid_key, len(df))
+    if not rows:
+        return df.iloc[0:0].copy()
+    return df.iloc[rows].copy()
+
+
+def search_instagram_for_selected(selected_df: pd.DataFrame, key_prefix: str) -> None:
+    if selected_df.empty:
         st.warning("Selecione uma linha para buscar Instagram.")
         return
 
-    if len(selected) > 1:
+    if len(selected_df) > 1:
         st.info("Mais de uma linha selecionada: usando apenas a primeira.")
 
-    lead = selected.iloc[0].to_dict()
+    lead = selected_df.iloc[0].to_dict()
     lead_name = str(lead.get("nome", "")).strip() or "(sem nome)"
 
     with st.spinner(f"Buscando Instagram para: {lead_name}..."):
@@ -901,110 +1041,61 @@ def search_instagram_for_selected(edited_df: pd.DataFrame, key_prefix: str) -> N
     st.info("Nenhuma alteracao aplicada (possivelmente ja estava preenchido).")
 
 
-def render_link_actions(edited_df: pd.DataFrame, key_prefix: str) -> None:
-    if "selecionar" not in edited_df.columns:
-        return
-    selected = edited_df[edited_df["selecionar"] == True]
-    if selected.empty:
-        st.caption("Selecione 1 linha para habilitar links rapidos.")
+def render_selection_menu(tab_label: str, selected_df: pd.DataFrame) -> None:
+    total_selected = len(selected_df)
+    if total_selected == 0:
         return
 
-    lead = selected.iloc[0].to_dict()
+    lead = selected_df.iloc[0].to_dict()
     wa = _whatsapp_base_link(lead)
     ig = normalize_instagram_url(lead.get("instagram", ""))
     origem = str(lead.get("link_origem", "")).strip()
     lead_country = _normalize(lead.get("pais", ""))
-    is_portugal = lead_country == "portugal"
-
-    c1, c2, c3, c4 = st.columns(4)
-    if wa:
-        c1.link_button("Abrir WhatsApp", wa)
+    settings = load_contact_settings()
+    msg_1 = settings["msg_1_pt"] if lead_country == "portugal" else settings["msg_1_br"]
+    msg_2 = settings["msg_2"]
+    send_url_1 = _build_whatsapp_send_link(lead, msg_1)
+    send_url_2 = _build_whatsapp_send_link(lead, msg_2)
+    cols = st.columns([1, 1, 0.9, 0.9, 1, 1, 1, 1, 1, 1, 0.9, 1, 2], gap="small")
+    if send_url_1:
+        cols[0].link_button("Msg 1", send_url_1, width="stretch")
     else:
-        c1.button("Abrir WhatsApp", disabled=True, key=f"{key_prefix}_wa_dis")
-    if ig:
-        c2.link_button("Abrir Instagram", ig)
-    else:
-        c2.button("Abrir Instagram", disabled=True, key=f"{key_prefix}_ig_dis")
-    if origem:
-        c3.link_button("Abrir origem", origem)
-    else:
-        c3.button("Abrir origem", disabled=True, key=f"{key_prefix}_orig_dis")
-
-    if c4.button("Procurar Instagram", key=f"{key_prefix}_search_ig"):
-        search_instagram_for_selected(edited_df, key_prefix)
-
-    if is_portugal:
-        default_msg = (
-            "Ol\u00e1, tudo bem? O meu nome \u00e9 Pedro.\n\n"
-            "Estive a ver o seu trabalho no Instagram e gostei bastante. Reparei que muitas clientes acabam por enviar "
-            "mensagem pelo direct ou WhatsApp, mas nem sempre existe um link profissional que transmita confian\u00e7a e facilite a marca\u00e7\u00e3o.\n\n"
-            "Eu crio uma p\u00e1gina online simples e profissional (como um cart\u00e3o de visita digital), com bot\u00e3o direto para o WhatsApp, "
-            "servi\u00e7os, localiza\u00e7\u00e3o e testemunhos \u2014 tudo organizado para ajudar a transformar visitas em marca\u00e7\u00f5es.\n\n"
-            "Posso enviar-lhe um exemplo r\u00e1pido para ver como funciona?"
-        )
-    else:
-        default_msg = (
-            "Ol\u00e1, tudo bem?\n"
-            "Meu nome \u00e9 Pedro.\n\n"
-            "Vi seu trabalho no Instagram e gostei muito. Notei que muitas clientes acabam chamando no direct/WhatsApp e, \u00e0s vezes, falta um link mais profissional para passar confian\u00e7a e facilitar o agendamento.\n\n"
-            "Eu crio uma landing simples (uma p\u00e1gina \u00fanica na internet, tipo um cart\u00e3o de visitas profissional, com bot\u00e3o direto para o WhatsApp), com seus servi\u00e7os, localiza\u00e7\u00e3o e depoimentos, para transformar visita em agendamento.\n"
-            "Posso te mandar um exemplo rapidinho para voc\u00ea ver como fica?"
-        )
-    msg_template_key = f"{key_prefix}_msg_template_{lead_country or 'default'}"
-    msg_template = st.text_area(
-        "Mensagem inicial WhatsApp (use {nome}, {cidade}, {bairro})",
-        value=default_msg,
-        key=msg_template_key,
-        height=90,
-    )
-
-    send_url = _build_whatsapp_send_link(lead, msg_template)
-
-    default_msg_2 = (
-        "Oi, tudo bem? Meu nome \u00e9 Pedro.\n"
-        "Dei uma olhada no seu Instagram e achei seu trabalho bem profissional.\n\n"
-        "Notei que muitas clientes acabam chamando pelo direct ou WhatsApp e, \u00e0s vezes, ter um link mais organizado ajuda bastante a passar confian\u00e7a e facilitar o agendamento.\n\n"
-        "Eu ajudo justamente com isso: crio uma p\u00e1gina simples, personalizada para o seu servi\u00e7o, com bot\u00e3o direto para o WhatsApp e as informa\u00e7\u00f5es principais, para deixar tudo mais f\u00e1cil para quem entra no seu perfil.\n\n"
-        "Se fizer sentido para voc\u00ea, posso te mandar um exemplo para ver se gosta da ideia."
-    )
-    msg_template_2 = st.text_area(
-        "Mensagem 2 WhatsApp (use {nome}, {cidade}, {bairro})",
-        value=default_msg_2,
-        key=f"{key_prefix}_msg_template_2",
-        height=110,
-    )
-    send_url_2 = _build_whatsapp_send_link(lead, msg_template_2)
-
-    c5, c6, c7 = st.columns([2, 2, 2])
-    if send_url:
-        c5.link_button("Enviar 1a mensagem no WhatsApp", send_url)
-    else:
-        c5.button("Enviar 1a mensagem no WhatsApp", disabled=True, key=f"{key_prefix}_send_wa_dis")
-
+        cols[0].button("Msg 1", disabled=True, key=f"{tab_label}_send_wa1_dis", width="stretch")
     if send_url_2:
-        c6.link_button("Enviar 2a mensagem no WhatsApp", send_url_2)
+        cols[1].link_button("Msg 2", send_url_2, width="stretch")
     else:
-        c6.button("Enviar 2a mensagem no WhatsApp", disabled=True, key=f"{key_prefix}_send_wa2_dis")
-
-    if send_url or send_url_2:
-        c7.caption("Abre conversa com texto pronto. No WhatsApp, confirme o envio.")
+        cols[1].button("Msg 2", disabled=True, key=f"{tab_label}_send_wa2_dis", width="stretch")
+    if wa:
+        cols[2].link_button("WA", wa, width="stretch")
     else:
-        c7.caption("Sem telefone/whatsapp_link para este lead.")
+        cols[2].button("WA", disabled=True, key=f"{tab_label}_wa_dis", width="stretch")
+    if ig:
+        cols[3].link_button("IG", ig, width="stretch")
+    else:
+        cols[3].button("IG", disabled=True, key=f"{tab_label}_ig_dis", width="stretch")
+    if origem:
+        cols[4].link_button("Origem", origem, width="stretch")
+    else:
+        cols[4].button("Origem", disabled=True, key=f"{tab_label}_orig_dis", width="stretch")
+    if cols[5].button("Buscar IG", key=f"{tab_label}_search_ig", width="stretch"):
+        search_instagram_for_selected(selected_df, tab_label)
 
+    note = cols[12].text_input(
+        "Nota",
+        key=f"{tab_label}_note",
+        label_visibility="collapsed",
+        placeholder="nota",
+    )
 
-def render_batch_actions(tab_label: str, leads_df: pd.DataFrame, edited_df: pd.DataFrame) -> None:
-    note = st.text_input("Nota para acao em lote", key=f"{tab_label}_note")
-    c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 2, 1.6])
-
-    for label, value, col in [
-        ("ENVIADO", "enviado", c1),
-        ("IGNORAR", "ignorar", c2),
-        ("FECHOU", "fechou", c3),
-        ("RESPONDEU", "respondeu", c4),
-        ("NOVO", "novo", c5),
+    for idx, label, value in [
+        (6, "ENVIAR", "enviado"),
+        (7, "IGNORAR", "ignorar"),
+        (8, "FECHOU", "fechou"),
+        (9, "RESPONDEU", "respondeu"),
+        (10, "NOVO", "novo"),
     ]:
-        if col.button(f"Marcar selecionados como {label}", key=f"{tab_label}_{value}"):
-            updated = batch_update_status(edited_df, value, note)
+        if cols[idx].button(label, key=f"{tab_label}_{value}", width="stretch"):
+            updated = batch_update_status(selected_df, value, note)
             if updated == 0:
                 st.warning("Nenhuma linha selecionada.")
             else:
@@ -1013,19 +1104,8 @@ def render_batch_actions(tab_label: str, leads_df: pd.DataFrame, edited_df: pd.D
                 generate_ig_locator_prospect(load_leads())
                 st.rerun()
 
-    if c6.button("Salvar alteracoes", key=f"{tab_label}_save"):
-        changed = update_from_editor(
-            leads_df,
-            edited_df,
-            editable_fields=["status", "observacao", "last_contact_note"],
-        )
-        st.success(f"Salvo. Linhas alteradas: {changed}")
-        generate_prospect_list(LEADS_PATH, PROSPECT_PATH, PROSPECT_XLSX_PATH)
-        generate_ig_locator_prospect(load_leads())
-        st.rerun()
-
-    if c7.button("Excluir selecionados", key=f"{tab_label}_exclude"):
-        removed, excluded_added = exclude_selected_leads(edited_df, reason=note)
+    if cols[11].button("EXCLUIR", key=f"{tab_label}_exclude", width="stretch"):
+        removed, excluded_added = exclude_selected_leads(selected_df, reason=note)
         if removed == 0:
             st.warning("Nenhuma linha selecionada para exclusao.")
         else:
@@ -1100,6 +1180,38 @@ def render_outreach_analytics(leads_df: pd.DataFrame) -> None:
     )
     recent_daily = daily[daily["data"] >= window_start].copy()
     st.dataframe(recent_daily, use_container_width=True, hide_index=True, height=260)
+
+
+def render_contact_settings() -> None:
+    st.subheader("Mensagens WhatsApp")
+    st.caption("Esses textos sao usados pelos botoes 'Enviar mensagem 1' e 'Enviar mensagem 2' no menu de acoes do lead.")
+    settings = load_contact_settings()
+    msg_1_br = st.text_area(
+        "Mensagem 1 - Brasil (use {nome}, {cidade}, {bairro})",
+        value=settings["msg_1_br"],
+        key="cfg_msg_1_br",
+        height=140,
+    )
+    msg_1_pt = st.text_area(
+        "Mensagem 1 - Portugal (use {nome}, {cidade}, {bairro})",
+        value=settings["msg_1_pt"],
+        key="cfg_msg_1_pt",
+        height=140,
+    )
+    msg_2 = st.text_area(
+        "Mensagem 2 (use {nome}, {cidade}, {bairro})",
+        value=settings["msg_2"],
+        key="cfg_msg_2",
+        height=140,
+    )
+    c1, c2 = st.columns([1, 1])
+    if c1.button("Salvar mensagens", key="cfg_save_messages"):
+        save_contact_settings({"msg_1_br": msg_1_br, "msg_1_pt": msg_1_pt, "msg_2": msg_2})
+        st.success("Mensagens salvas.")
+    if c2.button("Restaurar padrao", key="cfg_reset_messages"):
+        save_contact_settings(_default_contact_settings())
+        st.success("Mensagens padrao restauradas.")
+        st.rerun()
 
 
 def render_latest_prospect_tab() -> None:
@@ -1376,11 +1488,9 @@ def render_instagram_locator_tab(leads_df: pd.DataFrame) -> None:
     filtered = apply_filters(locator_df, "ig_locator", has_priority=True)
     view_cols = OUTPUT_COLUMNS.copy()
     filtered = ensure_columns(filtered, view_cols)
-    editor_df = filtered[view_cols].copy()
-    editor_df = add_status_badge_column(editor_df)
-    editor_df.insert(0, "selecionar", False)
+    table_df = filtered[view_cols].copy()
+    table_df = add_status_badge_column(table_df)
     preferred_cols = [
-        "selecionar",
         "priority_score",
         "fonte",
         "nome",
@@ -1397,36 +1507,35 @@ def render_instagram_locator_tab(leads_df: pd.DataFrame) -> None:
         "tem_link_na_bio",
         "tem_site",
         "tem_whatsapp_visivel",
+        "activity_score",
         "score",
         "observacao",
         "link_origem",
         "data_coleta",
     ]
-    editor_df = editor_df[[c for c in preferred_cols if c in editor_df.columns] + [c for c in editor_df.columns if c not in preferred_cols]]
+    table_df = table_df[[c for c in preferred_cols if c in table_df.columns] + [c for c in table_df.columns if c not in preferred_cols]]
 
-    edited = st.data_editor(
-        editor_df,
-        use_container_width=True,
-        num_rows="fixed",
-        height=380,
-        key="editor_ig_locator",
-        column_config={
-            "selecionar": st.column_config.CheckboxColumn("selecionar"),
-            "status_visual": st.column_config.TextColumn("status", width="medium"),
-            "status": st.column_config.SelectboxColumn(
-                "status",
-                options=["novo", "enviado", "ignorar", "respondeu", "fechou"],
-            ),
-            "observacao": st.column_config.TextColumn("observacao", width="large"),
-        },
-        disabled=[c for c in editor_df.columns if c not in {"selecionar", "status", "observacao"}],
-    )
-
-    render_link_actions(edited, "ig_locator")
-    render_batch_actions("ig_locator", leads_df, edited)
+    grid_key = "grid_ig_locator"
+    selected_before = selected_from_grid(filtered, grid_key)
+    with st.container(border=True):
+        if not selected_before.empty:
+            render_selection_menu("ig_locator", selected_before)
+        st.dataframe(
+            table_df,
+            use_container_width=True,
+            height=420,
+            key=grid_key,
+            on_select="rerun",
+            selection_mode=["single-row", "single-cell"],
+            column_config={
+                "status_visual": st.column_config.TextColumn("status", width="medium"),
+                "observacao": st.column_config.TextColumn("observacao", width="large"),
+            },
+        )
 
 
 def main() -> None:
+    apply_responsive_styles()
     st.title("Painel Local de Leads")
 
     leads_exists_before = LEADS_PATH.exists()
@@ -1474,11 +1583,9 @@ def main() -> None:
                 filtered = apply_filters(prosp_df, "prosp", has_priority=True)
                 view_cols = OUTPUT_COLUMNS.copy()
                 filtered = ensure_columns(filtered, view_cols)
-                editor_df = filtered[view_cols].copy()
-                editor_df = add_status_badge_column(editor_df)
-                editor_df.insert(0, "selecionar", False)
+                table_df = filtered[view_cols].copy()
+                table_df = add_status_badge_column(table_df)
                 preferred_cols = [
-                    "selecionar",
                     "priority_score",
                     "fonte",
                     "nome",
@@ -1495,33 +1602,31 @@ def main() -> None:
                     "tem_link_na_bio",
                     "tem_site",
                     "tem_whatsapp_visivel",
+                    "activity_score",
                     "score",
                     "observacao",
                     "link_origem",
                     "data_coleta",
                 ]
-                editor_df = editor_df[[c for c in preferred_cols if c in editor_df.columns] + [c for c in editor_df.columns if c not in preferred_cols]]
+                table_df = table_df[[c for c in preferred_cols if c in table_df.columns] + [c for c in table_df.columns if c not in preferred_cols]]
 
-                edited = st.data_editor(
-                    editor_df,
-                    use_container_width=True,
-                    num_rows="fixed",
-                    height=420,
-                    key="editor_prosp",
-                    column_config={
-                        "selecionar": st.column_config.CheckboxColumn("selecionar"),
-                        "status_visual": st.column_config.TextColumn("status", width="medium"),
-                        "status": st.column_config.SelectboxColumn(
-                            "status",
-                            options=["novo", "enviado", "ignorar", "respondeu", "fechou"],
-                        ),
-                        "observacao": st.column_config.TextColumn("observacao", width="large"),
-                    },
-                    disabled=[c for c in editor_df.columns if c not in {"selecionar", "status", "observacao"}],
-                )
-
-                render_link_actions(edited, "prosp")
-                render_batch_actions("prosp", leads_df, edited)
+                grid_key = "grid_prosp"
+                selected_before = selected_from_grid(filtered, grid_key)
+                with st.container(border=True):
+                    if not selected_before.empty:
+                        render_selection_menu("prosp", selected_before)
+                    st.dataframe(
+                        table_df,
+                        use_container_width=True,
+                        height=420,
+                        key=grid_key,
+                        on_select="rerun",
+                        selection_mode=["single-row", "single-cell"],
+                        column_config={
+                            "status_visual": st.column_config.TextColumn("status", width="medium"),
+                            "observacao": st.column_config.TextColumn("observacao", width="large"),
+                        },
+                    )
 
     with tab_all:
         st.subheader("Todos os Leads")
@@ -1529,11 +1634,9 @@ def main() -> None:
 
         all_df = ensure_columns(leads_df, LEADS_REQUIRED_COLUMNS)
         filtered = apply_filters(all_df, "all", has_priority=False)
-        editor_df = filtered.copy()
-        editor_df = add_status_badge_column(editor_df)
-        editor_df.insert(0, "selecionar", False)
+        table_df = filtered.copy()
+        table_df = add_status_badge_column(table_df)
         preferred_cols = [
-            "selecionar",
             "fonte",
             "nome",
             "nicho",
@@ -1549,6 +1652,7 @@ def main() -> None:
             "tem_link_na_bio",
             "tem_site",
             "tem_whatsapp_visivel",
+            "activity_score",
             "score",
             "observacao",
             "last_contact_note",
@@ -1556,36 +1660,32 @@ def main() -> None:
             "link_origem",
             "data_coleta",
         ]
-        editor_df = editor_df[[c for c in preferred_cols if c in editor_df.columns] + [c for c in editor_df.columns if c not in preferred_cols]]
+        table_df = table_df[[c for c in preferred_cols if c in table_df.columns] + [c for c in table_df.columns if c not in preferred_cols]]
 
-        edited = st.data_editor(
-            editor_df,
-            use_container_width=True,
-            num_rows="fixed",
-            height=420,
-            key="editor_all",
-            column_config={
-                "selecionar": st.column_config.CheckboxColumn("selecionar"),
-                "status_visual": st.column_config.TextColumn("status", width="medium"),
-                "status": st.column_config.SelectboxColumn(
-                    "status", options=["novo", "enviado", "ignorar", "respondeu", "fechou"]
-                ),
-                "observacao": st.column_config.TextColumn("observacao", width="large"),
-                "last_contact_note": st.column_config.TextColumn("last_contact_note", width="large"),
-            },
-            disabled=[
-                c
-                for c in editor_df.columns
-                if c not in {"selecionar", "status", "observacao", "last_contact_note"}
-            ],
-        )
-
-        render_link_actions(edited, "all")
-        render_batch_actions("all", leads_df, edited)
+        grid_key = "grid_all"
+        selected_before = selected_from_grid(filtered, grid_key)
+        with st.container(border=True):
+            if not selected_before.empty:
+                render_selection_menu("all", selected_before)
+            st.dataframe(
+                table_df,
+                use_container_width=True,
+                height=420,
+                key=grid_key,
+                on_select="rerun",
+                selection_mode=["single-row", "single-cell"],
+                column_config={
+                    "status_visual": st.column_config.TextColumn("status", width="medium"),
+                    "observacao": st.column_config.TextColumn("observacao", width="large"),
+                    "last_contact_note": st.column_config.TextColumn("last_contact_note", width="large"),
+                },
+            )
 
     with tab_utils:
         st.subheader("Config/Utils")
         render_outreach_analytics(leads_df)
+        st.divider()
+        render_contact_settings()
 
         c1, c2, c3 = st.columns(3)
 
@@ -1657,6 +1757,10 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 

@@ -21,6 +21,7 @@ REQUEST_SLEEP_SECONDS = 1.0
 
 COLUMNS = [
     "fonte",
+    "place_id",
     "nome",
     "instagram",
     "telefone",
@@ -33,6 +34,12 @@ COLUMNS = [
     "tem_link_na_bio",
     "tem_site",
     "tem_whatsapp_visivel",
+    "business_status",
+    "rating",
+    "user_ratings_total",
+    "place_types",
+    "open_now",
+    "activity_score",
     "score",
     "observacao",
     "link_origem",

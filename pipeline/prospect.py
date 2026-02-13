@@ -9,6 +9,7 @@ from openpyxl.utils import get_column_letter
 OUTPUT_COLUMNS = [
     "priority_score",
     "fonte",
+    "place_id",
     "nome",
     "instagram",
     "telefone",
@@ -21,6 +22,12 @@ OUTPUT_COLUMNS = [
     "tem_link_na_bio",
     "tem_site",
     "tem_whatsapp_visivel",
+    "business_status",
+    "rating",
+    "user_ratings_total",
+    "place_types",
+    "open_now",
+    "activity_score",
     "score",
     "observacao",
     "link_origem",
@@ -55,6 +62,36 @@ def _priority_score(row: pd.Series) -> int:
         score += 10
     if fonte in {"maps", "google_maps"} and _is_no(row.get("tem_site", "")):
         score += 7
+    if fonte in {"maps", "google_maps"}:
+        business_status = _normalize(row.get("business_status", ""))
+        if business_status == "operational":
+            score += 2
+        elif business_status:
+            score -= 20
+
+        rating = _to_float(row.get("rating", "0"))
+        reviews = _to_int(row.get("user_ratings_total", "0"))
+        place_types = _normalize(str(row.get("place_types", "")).replace(",", " "))
+
+        if rating == 0:
+            score += 1
+        elif rating <= 4.2:
+            score += 2
+        elif rating >= 4.7:
+            score -= 1
+
+        if reviews == 0:
+            score += 1
+        elif reviews <= 30:
+            score += 2
+        elif reviews >= 300:
+            score -= 2
+
+        if any(tok in place_types for tok in ["beauty", "hair_salon", "nail_salon", "spa"]):
+            score += 2
+        else:
+            score -= 2
+        score += min(max(_to_int(row.get("activity_score", 0)), 0), 10)
     if _is_yes(row.get("tem_whatsapp_visivel", "")):
         score += 5
     if telefone:
@@ -80,6 +117,13 @@ def _to_int(value) -> int:
         return int(float(str(value).strip()))
     except (ValueError, TypeError):
         return 0
+
+
+def _to_float(value) -> float:
+    try:
+        return float(str(value).strip())
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def _export_xlsx(df: pd.DataFrame, output_xlsx: Path) -> None:

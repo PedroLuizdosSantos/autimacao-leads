@@ -5,6 +5,10 @@ import pandas as pd
 
 def dedupe_key(row) -> str:
     fonte = str(row.get("fonte", "")).strip().lower()
+    place_id = str(row.get("place_id", "")).strip()
+    if fonte in {"maps", "google_maps"} and place_id:
+        return f"{fonte}|{place_id}"
+
     link_origem = str(row.get("link_origem", "")).strip().lower()
     if link_origem:
         return f"{fonte}|{link_origem}"
