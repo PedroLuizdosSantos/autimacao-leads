@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import os
 import re
+import subprocess
 import unicodedata
 from urllib.parse import quote_plus
 
@@ -107,6 +108,24 @@ def apply_responsive_styles() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def get_app_version() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        commit = str(result.stdout).strip()
+        if commit:
+            return commit
+    except Exception:
+        pass
+    return "desconhecida"
 
 
 def get_google_places_api_key() -> str:
@@ -1585,6 +1604,7 @@ def render_instagram_locator_tab(leads_df: pd.DataFrame) -> None:
 def main() -> None:
     apply_responsive_styles()
     st.title("Painel Local de Leads")
+    st.caption(f"Versao: {get_app_version()}")
 
     leads_exists_before = LEADS_PATH.exists()
     leads_df = load_leads()
