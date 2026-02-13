@@ -43,6 +43,72 @@ def _norm(value: str) -> str:
     return "".join(ch for ch in text if not unicodedata.combining(ch))
 
 
+def _target_country_from_query(city: str) -> str:
+    city_norm = _norm(city)
+    if any(tok in city_norm for tok in ["portugal", " lisb", "porto"]):
+        return "portugal"
+    if any(tok in city_norm for tok in ["brasil", "brazil"]):
+        return "brasil"
+    if any(tok in city_norm for tok in ["usa", "united states", "estados unidos"]):
+        return "estados unidos"
+    return ""
+
+
+def _region_from_query(city: str) -> str:
+    target = _target_country_from_query(city)
+    if target == "portugal":
+        return "pt"
+    if target == "brasil":
+        return "br"
+    if target == "estados unidos":
+        return "us"
+    return ""
+
+
+def _country_from_details(details: dict) -> str:
+    components = details.get("address_components") or details.get("address_component") or []
+    for comp in components:
+        types = {str(t).strip().lower() for t in comp.get("types", [])}
+        if "country" in types:
+            long_name = _norm(comp.get("long_name", ""))
+            short_name = _norm(comp.get("short_name", ""))
+            if short_name in {"br", "bra"} or "brasil" in long_name or "brazil" in long_name:
+                return "brasil"
+            if short_name == "pt" or "portugal" in long_name:
+                return "portugal"
+            if short_name in {"us", "usa"} or "united states" in long_name:
+                return "estados unidos"
+
+    formatted = _norm(details.get("formatted_address", ""))
+    if "portugal" in formatted:
+        return "portugal"
+    if "brasil" in formatted or "brazil" in formatted:
+        return "brasil"
+    if "united states" in formatted or "usa" in formatted:
+        return "estados unidos"
+    return ""
+
+
+def _city_from_details(details: dict) -> str:
+    components = details.get("address_components") or details.get("address_component") or []
+    city = ""
+    state = ""
+    country = _country_from_details(details)
+
+    for comp in components:
+        types = {str(t).strip().lower() for t in comp.get("types", [])}
+        if not city and ("locality" in types or "administrative_area_level_2" in types):
+            city = str(comp.get("long_name", "")).strip()
+        if not state and "administrative_area_level_1" in types:
+            state = str(comp.get("short_name", "")).strip()
+
+    if city and state and country == "brasil":
+        return f"{city} - {state}"
+    if city:
+        return city
+    return ""
+
+
 def _only_digits(value: str) -> str:
     return "".join(ch for ch in str(value) if ch.isdigit())
 
@@ -227,7 +293,7 @@ def _fetch_place_details(place_id: str, api_key: str, sleep_seconds: float):
     params = {
         "place_id": place_id,
         "fields": (
-            "place_id,name,formatted_address,international_phone_number,website,url,types,"
+            "place_id,name,formatted_address,address_component,international_phone_number,website,url,types,"
             "business_status,rating,user_ratings_total,opening_hours"
         ),
         "key": api_key,
@@ -246,6 +312,9 @@ def _fetch_place_details(place_id: str, api_key: str, sleep_seconds: float):
 def _fetch_place_ids(term: str, city: str, api_key: str, max_results: int, sleep_seconds: float):
     place_ids = []
     params = {"query": f"{term} {city}", "key": api_key}
+    region = _region_from_query(city)
+    if region:
+        params["region"] = region
     next_page_token = None
 
     while True:
@@ -316,10 +385,15 @@ def collect_maps_leads(term: str, city: str, api_key: str, max_results: int, sle
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     leads = []
     place_ids = _fetch_place_ids(term, city, api_key, max_results, sleep_seconds)
+    target_country = _target_country_from_query(city)
 
     for place_id in place_ids:
         details = _fetch_place_details(place_id, api_key, sleep_seconds)
         if not details:
+            continue
+
+        detected_country = _country_from_details(details)
+        if target_country and detected_country and detected_country != target_country:
             continue
 
         business_status_raw = str(details.get("business_status", "")).strip()
@@ -344,6 +418,7 @@ def collect_maps_leads(term: str, city: str, api_key: str, max_results: int, sle
         opening_hours = details.get("opening_hours", {}) or {}
         open_now = opening_hours.get("open_now")
         open_now_str = "sim" if open_now is True else ("nao" if open_now is False else "")
+        city_real = _city_from_details(details) or city
 
         row = {
             "fonte": "Maps",
@@ -353,7 +428,13 @@ def collect_maps_leads(term: str, city: str, api_key: str, max_results: int, sle
             "telefone": telefone,
             "whatsapp_link": whatsapp_link,
             "site": site,
-            "cidade": city,
+            "cidade": city_real,
+            "pais": (
+                "Brasil" if detected_country == "brasil"
+                else "Portugal" if detected_country == "portugal"
+                else "Estados Unidos" if detected_country == "estados unidos"
+                else ""
+            ),
             "bairro": bairro,
             "nicho": term,
             "tem_link_na_bio": "nao",

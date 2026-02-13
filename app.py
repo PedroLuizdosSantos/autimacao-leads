@@ -143,13 +143,17 @@ def load_leads() -> pd.DataFrame:
     df = pd.read_csv(LEADS_PATH, dtype=str, keep_default_na=False)
     df = ensure_columns(df, LEADS_REQUIRED_COLUMNS)
     df = fill_missing_nicho(df)
+    df, harmonized = harmonize_city_country_from_phone(df)
     df = fill_missing_pais(df)
     if list(df.columns) != LEADS_REQUIRED_COLUMNS:
         df = df[LEADS_REQUIRED_COLUMNS]
         df.to_csv(LEADS_PATH, index=False, encoding="utf-8-sig")
     elif (
+        harmonized > 0
+        or (
         ("nicho" in df.columns and df["nicho"].astype(str).str.strip().any())
         or ("pais" in df.columns and df["pais"].astype(str).str.strip().any())
+        )
     ):
         df.to_csv(LEADS_PATH, index=False, encoding="utf-8-sig")
     return df
@@ -293,26 +297,70 @@ def fill_missing_nicho(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def infer_pais_from_row(row: pd.Series) -> str:
-    current = str(row.get("pais", "")).strip()
-    if current:
-        return current
+def harmonize_city_country_from_phone(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    out = df.copy()
+    if out.empty:
+        return out, 0
 
+    cidade_norm = out.get("cidade", pd.Series([""] * len(out), index=out.index)).map(_normalize)
+    phone_blob = (
+        out.get("telefone", pd.Series([""] * len(out), index=out.index)).astype(str)
+        + " "
+        + out.get("whatsapp_link", pd.Series([""] * len(out), index=out.index)).astype(str)
+    )
+    digits = phone_blob.str.replace(r"\D+", "", regex=True)
+
+    is_city_portugal = cidade_norm.str.contains("portugal", na=False) | cidade_norm.eq("lisboa")
+    is_br_phone = digits.str.startswith("55")
+    is_sjc_phone = digits.str.startswith("5512")
+
+    changed = 0
+    mask_sjc = is_city_portugal & is_sjc_phone
+    if mask_sjc.any():
+        out.loc[mask_sjc, "cidade"] = "Sao Jose dos Campos - SP"
+        out.loc[mask_sjc, "pais"] = "Brasil"
+        changed += int(mask_sjc.sum())
+
+    mask_br = is_city_portugal & is_br_phone & (~is_sjc_phone)
+    if mask_br.any():
+        out.loc[mask_br, "pais"] = "Brasil"
+        changed += int(mask_br.sum())
+
+    return out, changed
+
+
+def infer_pais_from_row(row: pd.Series) -> str:
     cidade = _normalize(row.get("cidade", ""))
+    city_guess = ""
     if "brasil" in cidade or "brazil" in cidade:
-        return "Brasil"
-    if "portugal" in cidade:
-        return "Portugal"
-    if any(tok in cidade for tok in ["usa", "united states", "estados unidos"]):
-        return "Estados Unidos"
+        city_guess = "Brasil"
+    elif "portugal" in cidade:
+        city_guess = "Portugal"
+    elif any(tok in cidade for tok in ["usa", "united states", "estados unidos"]):
+        city_guess = "Estados Unidos"
 
     uf_markers = {
         "ac", "al", "ap", "am", "ba", "ce", "df", "es", "go", "ma", "mt", "ms", "mg",
         "pa", "pb", "pr", "pe", "pi", "rj", "rn", "rs", "ro", "rr", "sc", "sp", "se", "to",
     }
     m_city = re.search(r"-\s*([a-z]{2})$", cidade)
-    if m_city and m_city.group(1) in uf_markers:
-        return "Brasil"
+    if m_city and m_city.group(1) in uf_markers and not city_guess:
+        city_guess = "Brasil"
+
+    # Strong local hint for your default market city, even when CSV came without UF suffix.
+    if not city_guess and "sao jose dos campos" in cidade:
+        city_guess = "Brasil"
+
+    current = str(row.get("pais", "")).strip()
+    if current:
+        current_norm = _normalize(current)
+        # If city clearly indicates Brazil, override mistaken country labels.
+        if city_guess == "Brasil" and current_norm != "brasil":
+            return "Brasil"
+        return current
+
+    if city_guess:
+        return city_guess
 
     raw_numbers = f"{row.get('whatsapp_link', '')} {row.get('telefone', '')}"
     digits = "".join(ch for ch in str(raw_numbers) if ch.isdigit())
